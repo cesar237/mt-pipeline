@@ -1,7 +1,7 @@
 # Makefile for compiling mt-pipeline
 
 # Compiler and flags
-CC = gcc
+CC = gcc -g
 CFLAGS = -Wall -Wextra -O2 -Iinclude -pthread
 
 # Directories
@@ -31,7 +31,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 
 # Clean up build files
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm *.o $(TARGET)
 
 # Phony targets
 .PHONY: all clean

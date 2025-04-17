@@ -65,13 +65,21 @@ Stage* create_stage(
     void* args, void* output, int num_threads, int priority,
     Queue* input_queue, Queue* output_queue) 
 {
+    ThreadArgs* thread_args = (ThreadArgs*)malloc(sizeof(ThreadArgs));
+    if (!thread_args) {
+        perror("Failed to allocate memory for thread args");
+        exit(EXIT_FAILURE);
+    }
     Stage* stage = (Stage*)malloc(sizeof(Stage));
     if (!stage) {
         perror("Failed to allocate memory for stage");
         exit(EXIT_FAILURE);
     }
+    thread_args->stage = stage;
+    thread_args->args = args;
+
     stage->stage_id = stage_id;
-    stage->args = args;
+    stage->args = thread_args;
     stage->output = output;
     stage->handler = handler;
     stage->num_threads = num_threads;
@@ -94,8 +102,7 @@ bool add_pipeline_stage(Pipeline* pipeline, Stage* stage) {
         fprintf(stderr, "Maximum number of stages reached\n");
         return false;
     }
-    pipeline->stages[pipeline->num_stages-1] = stage;
-    pipeline->num_stages++;
+    pipeline->stages[pipeline->num_stages++] = stage;
 
     printf("Stage %d added to pipeline\n", stage->stage_id);
 
@@ -119,7 +126,7 @@ void start_stage(Stage* stage) {
     for (int i = 0; i < stage->num_threads; i++) {
         if (pthread_create(
                 &stage->threads[i],  &stage->thread_attr, 
-                stage->handler, (void *)thread_args)) 
+                stage->handler, &thread_args)) 
         {
             fprintf(stderr, "Failed to create thread for stage %d\n",
                 stage->stage_id);
@@ -144,7 +151,9 @@ void stop_stage(Stage* stage) {
 void start_pipeline(Pipeline* pipeline) {
     pipeline->pipeline_running = true;
 
+    printf("Starting pipeline with %d stages\n", pipeline->num_stages);
     for (int i = 0; i < pipeline->num_stages; i++) {
+        printf("Starting stage %d\n", pipeline->stages[i]->stage_id);
         start_stage(pipeline->stages[i]);
     }
 

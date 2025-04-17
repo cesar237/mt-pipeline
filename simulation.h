@@ -1,4 +1,4 @@
-#ifdef SIMULATION_H
+#ifndef SIMULATION_H
 #define SIMULATION_H
 
 #include <stdlib.h>

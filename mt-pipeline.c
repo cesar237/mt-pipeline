@@ -20,7 +20,6 @@ typedef struct {
     uint64_t id;
     // Additional fields can be added based on specific requirements
     uint64_t created_at;
-    uint64_t processed_at;
 } Item;
 
 typedef struct{
@@ -33,6 +32,9 @@ void* poll_jobs(void* arg)
     ThreadArgs* thread_args = (ThreadArgs*)arg;
     Queue* input_queue = thread_args->stage->input_queue;
     Queue* output_queue = thread_args->stage->output_queue;
+
+    uint64_t duration = *(uint64_t*)thread_args->args;
+
     Item* item = NULL;
 
     while (thread_args->stage->is_running) {
@@ -40,7 +42,7 @@ void* poll_jobs(void* arg)
         item = (Item*)dequeue(input_queue);
         if (item) {
             // Process the item
-            busy_poll_ns(10000);
+            busy_poll_ns(duration);
 
             // Enqueue the processed item to the output queue
             enqueue(output_queue, item);
@@ -68,7 +70,7 @@ void* generate_items(void* arg) {
     // Generate items for the specified duration
 
     uint64_t start_time = get_current_time();
-    uint64_t end_time = start_time + duration_s;
+    uint64_t end_time = start_time + duration_s*1000000000;
     uint64_t current_time = start_time;
     GenStats *stats;
     stats = (GenStats*)malloc(sizeof(GenStats));
@@ -80,8 +82,7 @@ void* generate_items(void* arg) {
             // Create a new item
             Item* item = (Item*)malloc(sizeof(Item));
             item->id = stats->tx++;
-            item->created_at = time(NULL);
-            item->processed_at = 0;
+            item->created_at = get_current_time();
 
             // Enqueue the item to the queue
             if(!enqueue(queue, item)){
@@ -145,10 +146,10 @@ int main() {
     q4 = create_queue(1024);
 
     //Create stages
-    int duration_stage1 = 100;
-    int duration_stage2 = 100;
-    int duration_stage3 = 100;
-    int num_threads = 1;
+    uint64_t duration_stage1 = 100;
+    uint64_t duration_stage2 = 100;
+    uint64_t duration_stage3 = 100;
+    uint64_t num_threads = 1;
     Stage *stage1 = create_stage(
         1, (void *)&duration_stage1, poll_jobs, 
         NULL, num_threads, DEFAULT_PRIORITY, 
@@ -175,15 +176,18 @@ int main() {
         printf("Failed to create generator thread\n");
         return 1;
     }
+    printf("Generator thread created\n");
+
 
     if(pthread_create(&sink_thread, NULL, sink, 
         (void *)&sink_args)) {
         printf("Failed to create sink thread\n");
         return 1;
     }
+    printf("Sink thread created\n");
 
     // Start the pipeline
-    start_pipeline(pipeline);
+    // start_pipeline(pipeline);
     // for (int i = 0; i < num_stages; i++) {
     //     start_stage(pipeline->stages[i], poll_jobs);
     // }
@@ -191,7 +195,7 @@ int main() {
     // Stop and clean up
     pthread_join(generator_thread, &stats);
     pthread_join(sink_thread, NULL);
-    stop_pipeline(pipeline);
+    // stop_pipeline(pipeline);
 
     // Print statistics
     GenStats* gen_stats = (GenStats*)stats;

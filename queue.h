@@ -72,6 +72,16 @@ Queue* create_queue(int capacity) {
 
 void destroy_queue(Queue* queue) {
     if (queue) {
+        // drain the queue
+        int n = 0;
+        while (!is_queue_empty(queue)) {
+            void* item = dequeue(queue);
+            if (item) {
+                free(item);
+                n++;
+            }
+        }
+        printf("Drained %d items from the queue\n", n);
         pthread_spin_destroy(&queue->enqueue_lock);
         pthread_spin_destroy(&queue->dequeue_lock);
         free(queue->items);
