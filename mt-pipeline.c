@@ -1,0 +1,210 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <time.h>
+#include <string.h>
+
+#include <sched.h>
+#include "pipeline.h"
+#include "queue.h"
+#include "simulation.h"
+
+#define BATCH_SIZE 10
+#define DEFAULT_PRIORITY 0
+
+// Structure to represent an item in the pipeline
+typedef struct {
+    uint64_t id;
+    // Additional fields can be added based on specific requirements
+    uint64_t created_at;
+    uint64_t processed_at;
+} Item;
+
+typedef struct{
+    uint64_t tx;
+    uint64_t drops;
+} GenStats;
+
+void* poll_jobs(void* arg) 
+{
+    ThreadArgs* thread_args = (ThreadArgs*)arg;
+    Queue* input_queue = thread_args->stage->input_queue;
+    Queue* output_queue = thread_args->stage->output_queue;
+    Item* item = NULL;
+
+    while (thread_args->stage->is_running) {
+        // Poll for items in the input queue
+        item = (Item*)dequeue(input_queue);
+        if (item) {
+            // Process the item
+            busy_poll_ns(10000);
+
+            // Enqueue the processed item to the output queue
+            enqueue(output_queue, item);
+        }
+        else{
+            // If no item is available, sleep for a short duration
+            usleep(10);
+        }
+    }
+    return NULL;
+}
+
+typedef struct {
+    Queue* queue;
+    int duration_s;
+    int batch_size;
+} GeneratorArgs;
+
+void* generate_items(void* arg) {
+    GeneratorArgs* gen_args = (GeneratorArgs*)arg;
+    Queue* queue = gen_args->queue;
+    int duration_s = gen_args->duration_s;
+    int batch_size = gen_args->batch_size;
+
+    // Generate items for the specified duration
+
+    uint64_t start_time = get_current_time();
+    uint64_t end_time = start_time + duration_s;
+    uint64_t current_time = start_time;
+    GenStats *stats;
+    stats = (GenStats*)malloc(sizeof(GenStats));
+    stats->tx = 0;
+    stats->drops = 0;
+
+    while (current_time < end_time) {
+        for (int i = 0; i < batch_size; i++) {
+            // Create a new item
+            Item* item = (Item*)malloc(sizeof(Item));
+            item->id = stats->tx++;
+            item->created_at = time(NULL);
+            item->processed_at = 0;
+
+            // Enqueue the item to the queue
+            if(!enqueue(queue, item)){
+                // If the queue is full, drop the item
+                stats->drops++;
+                free(item);
+            }
+        }
+        usleep(1); // Simulate item generation time
+        current_time = get_current_time();
+    }
+
+    return (void *)stats;
+}
+
+void* sink(void* arg) {
+    GeneratorArgs* gen_args = (GeneratorArgs*)arg;
+    Queue* queue = gen_args->queue;
+    int duration_s = gen_args->duration_s;
+
+    uint64_t start_time = get_current_time();
+    uint64_t end_time = start_time + duration_s*1000000000;
+    Item* item = NULL;
+
+    while ((uint64_t)get_current_time() < end_time) {
+        // Dequeue an item from the queue
+        item = (Item*)dequeue(queue);
+        if (item) {
+            printf("%lu\n", get_current_time() - item->created_at);
+            free(item);
+        }
+        else{
+            // If no item is available, sleep for a short duration
+            usleep(10);
+        }
+    }
+    return NULL;
+}
+
+// Example usage
+int main() {
+    // Global pipeline instance
+    Pipeline* pipeline;
+
+    // generator and sink threads
+    pthread_t generator_thread;
+    pthread_t sink_thread;
+
+    void* stats;
+    // int num_stages = 3;
+    
+    // Example pipeline configuration
+    pipeline = create_pipeline();
+    
+    
+    // Create queues
+    Queue *q1, *q2, *q3, *q4;
+    q1 = create_queue(1024);
+    q2 = create_queue(1024);
+    q3 = create_queue(1024);
+    q4 = create_queue(1024);
+
+    //Create stages
+    int duration_stage1 = 100;
+    int duration_stage2 = 100;
+    int duration_stage3 = 100;
+    int num_threads = 1;
+    Stage *stage1 = create_stage(
+        1, (void *)&duration_stage1, poll_jobs, 
+        NULL, num_threads, DEFAULT_PRIORITY, 
+        q1, q2);
+    Stage *stage2 = create_stage(
+        2, (void *)&duration_stage2, poll_jobs,
+        NULL, num_threads, DEFAULT_PRIORITY, 
+        q2, q3);
+    Stage *stage3 = create_stage(
+        3, (void *)&duration_stage3, poll_jobs,
+        NULL, num_threads, DEFAULT_PRIORITY, 
+        q3, q4);
+
+    // Add stages to the pipeline
+    add_pipeline_stage(pipeline, stage1);
+    add_pipeline_stage(pipeline, stage2);
+    add_pipeline_stage(pipeline, stage3);
+
+    GeneratorArgs gen_args = {q1, 10, BATCH_SIZE};
+    GeneratorArgs sink_args = {q4, 10, BATCH_SIZE};
+
+    if(pthread_create(&generator_thread, NULL, generate_items, 
+        (void *)&gen_args)) {
+        printf("Failed to create generator thread\n");
+        return 1;
+    }
+
+    if(pthread_create(&sink_thread, NULL, sink, 
+        (void *)&sink_args)) {
+        printf("Failed to create sink thread\n");
+        return 1;
+    }
+
+    // Start the pipeline
+    start_pipeline(pipeline);
+    // for (int i = 0; i < num_stages; i++) {
+    //     start_stage(pipeline->stages[i], poll_jobs);
+    // }
+
+    // Stop and clean up
+    pthread_join(generator_thread, &stats);
+    pthread_join(sink_thread, NULL);
+    stop_pipeline(pipeline);
+
+    // Print statistics
+    GenStats* gen_stats = (GenStats*)stats;
+    printf("Generated items: %lu\n", gen_stats->tx);
+    printf("Dropped items: %lu\n", gen_stats->drops);
+    
+    // Free allocated resources
+    free(gen_stats);    
+    destroy_queue(q1);
+    destroy_queue(q2);
+    destroy_queue(q3);
+    destroy_queue(q4);
+    destroy_pipeline(pipeline);
+
+    return 0;
+}
