@@ -124,8 +124,10 @@ void start_stage(Stage* stage) {
     pthread_attr_setschedparam(&stage->thread_attr, &param);
 
     for (int i = 0; i < stage->num_threads; i++) {
+        printf("Starting thread %d: handler %p thread_args %p\n",
+            i, stage->handler, &thread_args);
         if (pthread_create(
-                &stage->threads[i],  &stage->thread_attr, 
+                &stage->threads[i], &stage->thread_attr, 
                 stage->handler, &thread_args)) 
         {
             fprintf(stderr, "Failed to create thread for stage %d\n",

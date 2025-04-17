@@ -9,6 +9,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <sched.h>
+#include <stdatomic.h>
+
 #include "pipeline.h"
 
 // queue.h
@@ -16,7 +18,6 @@
 typedef struct {
     void** items;
     int capacity;
-    int size;
     int head;
     int tail;
 
@@ -50,7 +51,6 @@ Queue* create_queue(int capacity) {
     }
 
     queue->capacity = capacity;
-    queue->size = 0;
     queue->head = 0;
     queue->tail = -1;
 
@@ -89,35 +89,46 @@ void destroy_queue(Queue* queue) {
     }
 }
 
-int get_queue_size(Queue* buffer) {
-    return (buffer->tail - buffer->head + buffer->capacity) % buffer->capacity;
+int get_queue_capacity(Queue* queue) {
+    return queue->capacity;
 }
 
 bool is_queue_empty(Queue* buffer) {
     return get_queue_size(buffer) == 0;
 }
 
-bool is_queue_full(Queue* buffer) {
-    return get_queue_size(buffer) == buffer->capacity;
+bool is_queue_full(Queue* rb) {
+    return get_queue_size(rb) == rb->capacity - 1;
+}
+
+int get_queue_size(Queue* queue) {
+    return (queue->head - queue->tail + queue->capacity) & (queue->capacity - 1);
 }
 
 bool enqueue(Queue* queue, void* item) {
-    bool result = true;
-
     pthread_spin_lock(&queue->enqueue_lock);
 
-    // If queue is full, ecrase the oldest item
+    // If queue is full, return false
     if (is_queue_full(queue)) {
-        result = false; 
+        pthread_spin_unlock(&queue->enqueue_lock);
+        return false; 
     }
 
     // Add item to queue
-    queue->tail = (queue->tail + 1) % queue->capacity;
-    queue->items[queue->tail] = item;
-    queue->size++;
+    int index = queue->head & (queue->capacity - 1);
+    queue->items[index] = item;
+    if (queue->items[index]) {
+        // Memory barrier to ensure the item is written before updating head
+        __sync_synchronize();
+        
+        // Update head
+        queue->head = (queue->head + 1) & (queue->capacity - 1);
+    }
+    // Memory barrier to ensure all writes are complete before unlocking
+    __sync_synchronize();
 
     pthread_spin_unlock(&queue->enqueue_lock);
-    return result;
+    return true;
 }
 
 void* dequeue(Queue* queue) {
@@ -127,12 +138,17 @@ void* dequeue(Queue* queue) {
 
     // If queue is empty, return NULL
     if (is_queue_empty(queue)) {
-        item = NULL;
+        pthread_spin_unlock(&queue->dequeue_lock);
+        return NULL;
     } else {
         // Remove item from queue
-        item = queue->items[queue->head];
-        queue->head = (queue->head + 1) % queue->capacity;
-        queue->size--;
+        int index = queue->tail & (queue->capacity - 1);
+        item = queue->items[index];
+        queue->items[index] = NULL; // Clear the item
+        // Memory barrier to ensure the item is read before updating tail
+        __sync_synchronize();
+        // Update tail
+        queue->tail = (queue->tail + 1) & (queue->capacity - 1);
     }
 
     pthread_spin_unlock(&queue->dequeue_lock);

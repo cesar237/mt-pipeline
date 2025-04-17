@@ -29,6 +29,7 @@ typedef struct{
 
 void* poll_jobs(void* arg) 
 {
+    printf("Poll jobs thread started\n");
     ThreadArgs* thread_args = (ThreadArgs*)arg;
     Queue* input_queue = thread_args->stage->input_queue;
     Queue* output_queue = thread_args->stage->output_queue;
@@ -67,17 +68,18 @@ void* generate_items(void* arg) {
     int duration_s = gen_args->duration_s;
     int batch_size = gen_args->batch_size;
 
-    // Generate items for the specified duration
-
-    uint64_t start_time = get_current_time();
-    uint64_t end_time = start_time + duration_s*1000000000;
-    uint64_t current_time = start_time;
     GenStats *stats;
     stats = (GenStats*)malloc(sizeof(GenStats));
     stats->tx = 0;
     stats->drops = 0;
 
-    while (current_time < end_time) {
+    printf("Generator thread started. Should run for %d seconds.\n", duration_s);
+
+    uint64_t start_time = get_current_time();
+    uint64_t end_time = start_time + duration_s*1000000000;
+
+    while (get_current_time() < end_time) {
+        // printf("Current time: %lu\n", get_current_time());
         for (int i = 0; i < batch_size; i++) {
             // Create a new item
             Item* item = (Item*)malloc(sizeof(Item));
@@ -87,13 +89,15 @@ void* generate_items(void* arg) {
             // Enqueue the item to the queue
             if(!enqueue(queue, item)){
                 // If the queue is full, drop the item
+                // printf("Item %lu dropped\n", item->id);
                 stats->drops++;
                 free(item);
             }
         }
         usleep(1); // Simulate item generation time
-        current_time = get_current_time();
     }
+    printf("Generator thread finished. Run in %lu nanoseconds.\n", 
+        (get_current_time() - start_time));
 
     return (void *)stats;
 }
@@ -103,11 +107,13 @@ void* sink(void* arg) {
     Queue* queue = gen_args->queue;
     int duration_s = gen_args->duration_s;
 
+    printf("Sink thread started. Should run for %d seconds.\n", duration_s);
+
     uint64_t start_time = get_current_time();
     uint64_t end_time = start_time + duration_s*1000000000;
     Item* item = NULL;
 
-    while ((uint64_t)get_current_time() < end_time) {
+    while (get_current_time() < end_time) {
         // Dequeue an item from the queue
         item = (Item*)dequeue(queue);
         if (item) {
@@ -165,8 +171,8 @@ int main() {
 
     // Add stages to the pipeline
     add_pipeline_stage(pipeline, stage1);
-    add_pipeline_stage(pipeline, stage2);
-    add_pipeline_stage(pipeline, stage3);
+    // add_pipeline_stage(pipeline, stage2);
+    // add_pipeline_stage(pipeline, stage3);
 
     GeneratorArgs gen_args = {q1, 10, BATCH_SIZE};
     GeneratorArgs sink_args = {q4, 10, BATCH_SIZE};
@@ -187,7 +193,7 @@ int main() {
     printf("Sink thread created\n");
 
     // Start the pipeline
-    // start_pipeline(pipeline);
+    start_pipeline(pipeline);
     // for (int i = 0; i < num_stages; i++) {
     //     start_stage(pipeline->stages[i], poll_jobs);
     // }
@@ -195,7 +201,7 @@ int main() {
     // Stop and clean up
     pthread_join(generator_thread, &stats);
     pthread_join(sink_thread, NULL);
-    // stop_pipeline(pipeline);
+    stop_pipeline(pipeline);
 
     // Print statistics
     GenStats* gen_stats = (GenStats*)stats;
