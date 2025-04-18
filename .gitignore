@@ -3,3 +3,4 @@ mt-pipeline.o
 *.o
 mt-pipeline-msp
 mt-pipeline-shm
+mt-parallel
