@@ -232,7 +232,7 @@ int main() {
             printf("Failed to create stage1 thread\n");
             return 1;
         }
-        pin_thread_to_cpu(stage1_threads[i], i + 2);
+        // pin_thread_to_cpu(stage1_threads[i], i + 2);
     }
     printf("Stage1 threads created\n");
 
