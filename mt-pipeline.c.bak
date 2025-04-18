@@ -1,6 +1,3 @@
-#define _GNU_SOURCE
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -10,22 +7,19 @@
 #include <time.h>
 #include <string.h>
 
-
 #include <sched.h>
 #include "pipeline.h"
 #include "queue.h"
 #include "simulation.h"
 
-#define BATCH_SIZE 64
+#define BATCH_SIZE 10
 #define DEFAULT_PRIORITY 0
-#define WAIT_PREVIOUS_STAGE_US 10
 
 // Structure to represent an item in the pipeline
 typedef struct {
     uint64_t id;
     // Additional fields can be added based on specific requirements
     uint64_t created_at;
-    bool steps_ok[MAX_STAGES];
 } Item;
 
 typedef struct{
@@ -33,46 +27,32 @@ typedef struct{
     uint64_t drops;
 } GenStats;
 
-void* poll_jobs(void* arg)  {
+void* poll_jobs(void* arg) 
+{
     printf("Poll jobs thread started\n");
     ThreadArgs* thread_args = (ThreadArgs*)arg;
     Queue* input_queue = thread_args->stage->input_queue;
     Queue* output_queue = thread_args->stage->output_queue;
-    int priority = *(int*)thread_args->priority;
-    Stage* stage = thread_args->stage;
-
-    // Set thread priority
-    set_current_thread_nice_level(priority);
-
-    uint64_t forwarded = 0;
-    uint64_t dropped = 0;
 
     uint64_t duration = *(uint64_t*)thread_args->args;
 
     Item* item = NULL;
 
-    while (stage->is_running) {
+    while (thread_args->stage->is_running) {
         // Poll for items in the input queue
         item = (Item*)dequeue(input_queue);
         if (item) {
+            // Process the item
             busy_poll_ns(duration);
 
             // Enqueue the processed item to the output queue
-            if(enqueue(output_queue, item)) {
-                forwarded++;
-            }else{
-                // If the output queue is full, drop the item
-                dropped++;
-                free(item);
-            }
+            enqueue(output_queue, item);
         }
         else{
             // If no item is available, sleep for a short duration
             usleep(10);
         }
     }
-    printf("Stage %d thread finished. Forwarded: %lu, Dropped: %lu\n", 
-        thread_args->stage->stage_id, forwarded, dropped);
     return NULL;
 }
 
@@ -87,8 +67,6 @@ void* generate_items(void* arg) {
     Queue* queue = gen_args->queue;
     int duration_s = gen_args->duration_s;
     int batch_size = gen_args->batch_size;
-
-    // set_current_thread_nice_level(-10);
 
     GenStats *stats;
     stats = (GenStats*)malloc(sizeof(GenStats));
@@ -107,9 +85,6 @@ void* generate_items(void* arg) {
             Item* item = (Item*)malloc(sizeof(Item));
             item->id = stats->tx++;
             item->created_at = get_current_time();
-            for (int j = 0; j < 10; j++) {
-                item->steps_ok[j] = false;
-            }
 
             // Enqueue the item to the queue
             if(!enqueue(queue, item)){
@@ -131,9 +106,6 @@ void* sink(void* arg) {
     GeneratorArgs* gen_args = (GeneratorArgs*)arg;
     Queue* queue = gen_args->queue;
     int duration_s = gen_args->duration_s;
-    uint64_t processed = 0;
-
-    // set_current_thread_nice_level(-10);
 
     printf("Sink thread started. Should run for %d seconds.\n", duration_s);
 
@@ -145,8 +117,7 @@ void* sink(void* arg) {
         // Dequeue an item from the queue
         item = (Item*)dequeue(queue);
         if (item) {
-            processed++;
-            // printf("%lu\n", get_current_time() - item->created_at);
+            printf("%lu\n", get_current_time() - item->created_at);
             free(item);
         }
         else{
@@ -154,7 +125,6 @@ void* sink(void* arg) {
             usleep(10);
         }
     }
-    printf("Sink thread finished. Processed: %lu\n", processed);
     return NULL;
 }
 
@@ -166,27 +136,6 @@ int main() {
     // generator and sink threads
     pthread_t generator_thread;
     pthread_t sink_thread;
-    pthread_t stage1_threads[MAX_THREADS];
-    pthread_t stage2_threads[MAX_THREADS];
-    pthread_t stage3_threads[MAX_THREADS];
-
-    #define N_THREADS 1
-    #define DURATION_STAGE 1000
-    #define PRIORITY 0
-
-    int num_threads1 = N_THREADS;
-    int num_threads2 = N_THREADS;
-    int num_threads3 = N_THREADS;
-
-    //Create stages
-    uint64_t duration_stage1 = DURATION_STAGE;
-    uint64_t duration_stage2 = DURATION_STAGE;
-    uint64_t duration_stage3 = DURATION_STAGE;
-
-    // Priority levels
-    int priority1 = PRIORITY;
-    int priority2 = PRIORITY+5;
-    int priority3 = PRIORITY+10;
 
     void* stats;
     // int num_stages = 3;
@@ -202,86 +151,49 @@ int main() {
     q3 = create_queue(1024);
     q4 = create_queue(1024);
 
+    //Create stages
+    uint64_t duration_stage1 = 100;
+    uint64_t duration_stage2 = 100;
+    uint64_t duration_stage3 = 100;
+    uint64_t num_threads = 1;
     Stage *stage1 = create_stage(
         1, (void *)&duration_stage1, poll_jobs, 
-        NULL, num_threads1, DEFAULT_PRIORITY, 
+        NULL, num_threads, DEFAULT_PRIORITY, 
         q1, q2);
     Stage *stage2 = create_stage(
         2, (void *)&duration_stage2, poll_jobs,
-        NULL, num_threads2, DEFAULT_PRIORITY, 
+        NULL, num_threads, DEFAULT_PRIORITY, 
         q2, q3);
     Stage *stage3 = create_stage(
         3, (void *)&duration_stage3, poll_jobs,
-        NULL, num_threads3, DEFAULT_PRIORITY, 
+        NULL, num_threads, DEFAULT_PRIORITY, 
         q3, q4);
 
     // Add stages to the pipeline
-    // add_pipeline_stage(pipeline, stage1);
+    add_pipeline_stage(pipeline, stage1);
     // add_pipeline_stage(pipeline, stage2);
     // add_pipeline_stage(pipeline, stage3);
 
-    GeneratorArgs gen_args = {q1, 15, BATCH_SIZE};
-    GeneratorArgs sink_args = {q4, 15, BATCH_SIZE};
-
-    ThreadArgs thread1_args = {stage1, &duration_stage1, &priority1};
-    ThreadArgs thread2_args = {stage2, &duration_stage2, &priority2};
-    ThreadArgs thread3_args = {stage3, &duration_stage3, &priority3};
+    GeneratorArgs gen_args = {q1, 10, BATCH_SIZE};
+    GeneratorArgs sink_args = {q4, 10, BATCH_SIZE};
 
     if(pthread_create(&generator_thread, NULL, generate_items, 
         (void *)&gen_args)) {
         printf("Failed to create generator thread\n");
         return 1;
     }
-    pin_thread_to_cpu(generator_thread, 0);
     printf("Generator thread created\n");
 
-    
+
     if(pthread_create(&sink_thread, NULL, sink, 
         (void *)&sink_args)) {
         printf("Failed to create sink thread\n");
         return 1;
     }
-    pin_thread_to_cpu(sink_thread, 1);
     printf("Sink thread created\n");
 
-    // Create stage1 threads
-    stage1->is_running = true;
-    for (int i = 0; i < num_threads1; i++) {
-        if (pthread_create(&stage1_threads[i], NULL, poll_jobs, 
-            (void *)&thread1_args)) {
-            printf("Failed to create stage1 thread\n");
-            return 1;
-        }
-        pin_thread_to_cpu(stage1_threads[i], i + 2);
-    }
-    printf("Stage1 threads created\n");
-    
-    // Create stage2 threads
-    stage2->is_running = true;
-    for (int i = 0; i < num_threads2; i++) {
-        if (pthread_create(&stage2_threads[i], NULL, poll_jobs, 
-            (void *)&thread2_args)) {
-            printf("Failed to create stage2 thread\n");
-            return 1;
-        }
-        pin_thread_to_cpu(stage2_threads[i], i + 2 + num_threads1);
-    }
-    printf("Stage2 threads created\n");
-
-    // Create stage3 threads
-    stage3->is_running = true;
-    for (int i = 0; i < num_threads3; i++) {
-        if (pthread_create(&stage3_threads[i], NULL, poll_jobs, 
-            (void *)&thread3_args)) {
-            printf("Failed to create stage3 thread\n");
-            return 1;
-        }
-        pin_thread_to_cpu(stage3_threads[i], i + 2 + num_threads1 + num_threads2);
-    }
-    printf("Stage3 threads created\n");
-
     // Start the pipeline
-    // start_pipeline(pipeline);
+    start_pipeline(pipeline);
     // for (int i = 0; i < num_stages; i++) {
     //     start_stage(pipeline->stages[i], poll_jobs);
     // }
@@ -289,19 +201,7 @@ int main() {
     // Stop and clean up
     pthread_join(generator_thread, &stats);
     pthread_join(sink_thread, NULL);
-    stage1->is_running = false;
-    stage2->is_running = false;
-    stage3->is_running = false;
-    for (int i = 0; i < num_threads1; i++) {
-        pthread_join(stage1_threads[i], NULL);
-    }
-    for (int i = 0; i < num_threads2; i++) {
-        pthread_join(stage2_threads[i], NULL);
-    }
-    for (int i = 0; i < num_threads3; i++) {
-        pthread_join(stage3_threads[i], NULL);
-    }
-    // stop_pipeline(pipeline);
+    stop_pipeline(pipeline);
 
     // Print statistics
     GenStats* gen_stats = (GenStats*)stats;

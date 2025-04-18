@@ -34,6 +34,7 @@ int get_queue_size(Queue* queue);
 int get_queue_capacity(Queue* queue);
 bool enqueue(Queue* queue, void* item);
 void* dequeue(Queue* queue);
+void* peek_queue(Queue* queue);
 
 
 Queue* create_queue(int capacity) {
@@ -77,15 +78,20 @@ void destroy_queue(Queue* queue) {
         while (!is_queue_empty(queue)) {
             void* item = dequeue(queue);
             if (item) {
-                free(item);
                 n++;
             }
         }
         printf("Drained %d items from the queue\n", n);
         pthread_spin_destroy(&queue->enqueue_lock);
         pthread_spin_destroy(&queue->dequeue_lock);
-        free(queue->items);
-        free(queue);
+        if (queue->items) {
+            free(queue->items);
+            queue->items = NULL;
+        }
+        if (queue) {
+            free(queue);
+            queue = NULL;
+        }
     }
 }
 
@@ -149,6 +155,25 @@ void* dequeue(Queue* queue) {
         __sync_synchronize();
         // Update tail
         queue->tail = (queue->tail + 1) & (queue->capacity - 1);
+    }
+
+    pthread_spin_unlock(&queue->dequeue_lock);
+    return item;
+}
+
+void* peek_queue(Queue* queue) {
+    void* item = NULL;
+
+    pthread_spin_lock(&queue->dequeue_lock);
+
+    // If queue is empty, return NULL
+    if (is_queue_empty(queue)) {
+        pthread_spin_unlock(&queue->dequeue_lock);
+        return NULL;
+    } else {
+        // Remove item from queue
+        int index = queue->tail & (queue->capacity - 1);
+        item = queue->items[index];
     }
 
     pthread_spin_unlock(&queue->dequeue_lock);

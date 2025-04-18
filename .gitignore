@@ -1,2 +1,5 @@
 mt-pipeline
 mt-pipeline.o
+*.o
+mt-pipeline-msp
+mt-pipeline-shm

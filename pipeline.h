@@ -1,11 +1,18 @@
 #ifndef PIPELINE_H
 #define PIPELINE_H
 
+#define _GNU_SOURCE
+
 #include <pthread.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <errno.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+
 
 #include "queue.h"
 
@@ -33,6 +40,7 @@ typedef struct {
 typedef struct {
     Stage* stage;
     void* args;
+    void* priority;
 } ThreadArgs;
 
 // Global pipeline configuration
@@ -59,6 +67,25 @@ bool add_pipeline_stage(Pipeline* pipeline, Stage* stage);
 void start_pipeline(Pipeline* pipeline);
 void stop_pipeline(Pipeline* pipeline);
 
+int pin_thread_to_cpu(pthread_t thread, int cpu_id);
+int set_current_thread_nice_level(int priority);
+
+int set_current_thread_nice_level(int priority) {
+    int ret = setpriority(PRIO_PROCESS, syscall(SYS_gettid), priority);
+    if (ret == -1) {
+        perror("Failed to set thread priority");
+        return -1;
+    }
+    // printf("Thread priority set to %d\n", getpriority(PRIO_PROCESS, syscall(SYS_gettid)));
+    return 0;
+}
+
+int pin_thread_to_cpu(pthread_t thread, int cpu_id) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu_id, &cpuset);
+    return pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
+}
 
 Stage* create_stage(
     int stage_id,  stage_function_t handler,

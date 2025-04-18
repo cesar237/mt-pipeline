@@ -18,7 +18,7 @@
 
 #define BATCH_SIZE 64
 #define DEFAULT_PRIORITY 0
-#define WAIT_PREVIOUS_STAGE_US 10
+#define WAIT_PREVIOUS_STAGE_US 1
 
 // Structure to represent an item in the pipeline
 typedef struct {
@@ -34,7 +34,7 @@ typedef struct{
 } GenStats;
 
 void* poll_jobs(void* arg)  {
-    printf("Poll jobs thread started\n");
+    // printf("Poll jobs thread started\n");
     ThreadArgs* thread_args = (ThreadArgs*)arg;
     Queue* input_queue = thread_args->stage->input_queue;
     Queue* output_queue = thread_args->stage->output_queue;
@@ -46,45 +46,80 @@ void* poll_jobs(void* arg)  {
 
     uint64_t forwarded = 0;
     uint64_t dropped = 0;
+    uint64_t not_ready = 0;
 
     uint64_t duration = *(uint64_t*)thread_args->args;
 
     Item* item = NULL;
 
+    int last_not_ready = -1;
     while (stage->is_running) {
         // Poll for items in the input queue
         item = (Item*)dequeue(input_queue);
-        if (item) {
-            busy_poll_ns(duration);
-
-            // Enqueue the processed item to the output queue
-            if(enqueue(output_queue, item)) {
-                forwarded++;
-            }else{
-                // If the output queue is full, drop the item
-                dropped++;
-                free(item);
-            }
-        }
-        else{
+        if (!item) {
             // If no item is available, sleep for a short duration
             usleep(10);
+            continue;
+        }
+        if (stage->stage_id == 1) {
+            if (item) {
+                busy_poll_ns(duration);
+                item->steps_ok[stage->stage_id] = true;
+                forwarded++;
+            }
+            else {
+                // If no item is available, sleep for a short duration
+                usleep(1);
+            }
+        }
+        if (stage->stage_id == 2) {
+            while (!item->steps_ok[1]) {
+                // Wait for the previous stage to finish processing
+                if (last_not_ready != item->id) {
+                    not_ready++;
+                    last_not_ready = item->id;
+                }
+                usleep(WAIT_PREVIOUS_STAGE_US);
+            }
+            busy_poll_ns(duration);
+            item->steps_ok[stage->stage_id] = true;
+            forwarded++;
+        }
+        if (stage->stage_id == 3) {
+            while (!item->steps_ok[2]) {
+                // Wait for the previous stage to finish processing
+                if (last_not_ready != item->id) {
+                    not_ready++;
+                    last_not_ready = item->id;
+                }
+                usleep(WAIT_PREVIOUS_STAGE_US);
+            }
+            busy_poll_ns(duration);
+            item->steps_ok[stage->stage_id] = true;
+            forwarded++;
+
+            if (!enqueue(output_queue, item)) {
+                // If the output queue is full, drop the item
+                dropped++;
+            }
         }
     }
-    printf("Stage %d thread finished. Forwarded: %lu, Dropped: %lu\n", 
-        thread_args->stage->stage_id, forwarded, dropped);
+    // printf("Stage %d thread finished. Forwarded: %lu, Dropped: %lu, Not ready: %lu\n",
+    //     thread_args->stage->stage_id, forwarded, dropped, not_ready);
     return NULL;
 }
 
 typedef struct {
-    Queue* queue;
+    Queue** queues;
+    int num_queues;
     int duration_s;
     int batch_size;
 } GeneratorArgs;
 
 void* generate_items(void* arg) {
     GeneratorArgs* gen_args = (GeneratorArgs*)arg;
-    Queue* queue = gen_args->queue;
+    Queue** queues = gen_args->queues;
+    int num_queues = gen_args->num_queues;
     int duration_s = gen_args->duration_s;
     int batch_size = gen_args->batch_size;
 
@@ -105,18 +140,23 @@ void* generate_items(void* arg) {
         for (int i = 0; i < batch_size; i++) {
             // Create a new item
             Item* item = (Item*)malloc(sizeof(Item));
-            item->id = stats->tx++;
+            item->id = ++stats->tx;
             item->created_at = get_current_time();
             for (int j = 0; j < 10; j++) {
                 item->steps_ok[j] = false;
             }
 
             // Enqueue the item to the queue
-            if(!enqueue(queue, item)){
-                // If the queue is full, drop the item
-                // printf("Item %lu dropped\n", item->id);
-                stats->drops++;
-                free(item);
+            for (int j = 0; j < num_queues; j++) {
+                if(!enqueue(queues[j], item)){
+                    // If the queue is full, drop the item
+                    // printf("Item %lu dropped\n", item->id);
+                    stats->drops++;
+                    if (item) {
+                        free(item);
+                        item = NULL;
+                    }
+                }
             }
         }
         usleep(1); // Simulate item generation time
@@ -127,8 +167,14 @@ void* generate_items(void* arg) {
     return (void *)stats;
 }
 
+typedef struct {
+    Queue* queue;
+    int duration_s;
+    int batch_size;
+} SinkArgs;
+
 void* sink(void* arg) {
-    GeneratorArgs* gen_args = (GeneratorArgs*)arg;
+    SinkArgs* gen_args = (SinkArgs*)arg;
     Queue* queue = gen_args->queue;
     int duration_s = gen_args->duration_s;
     uint64_t processed = 0;
@@ -139,6 +185,7 @@ void* sink(void* arg) {
 
     uint64_t start_time = get_current_time();
     uint64_t end_time = start_time + duration_s*1000000000;
+    uint64_t total_latency = 0;
     Item* item = NULL;
 
     while (get_current_time() < end_time) {
@@ -147,6 +194,7 @@ void* sink(void* arg) {
         if (item) {
             processed++;
             // printf("%lu\n", get_current_time() - item->created_at);
+            total_latency += (get_current_time() - item->created_at) / 1000;
             free(item);
         }
         else{
@@ -154,7 +202,9 @@ void* sink(void* arg) {
             usleep(10);
         }
     }
-    printf("Sink thread finished. Processed: %lu\n", processed);
+    printf("Sink thread finished. Processed: %lu, total latency: %lu microseconds\n", 
+        processed, total_latency);
+    printf("Average latency: %.2f microseconds\n", total_latency / (double)processed);
     return NULL;
 }
 
@@ -166,19 +216,22 @@ int main() {
     // generator and sink threads
     pthread_t generator_thread;
     pthread_t sink_thread;
+
+    // Stage threads
     pthread_t stage1_threads[MAX_THREADS];
     pthread_t stage2_threads[MAX_THREADS];
     pthread_t stage3_threads[MAX_THREADS];
 
-    #define N_THREADS 1
-    #define DURATION_STAGE 1000
+    #define N_THREADS 5
+    #define DURATION_STAGE 100000
     #define PRIORITY 0
+    #define QUEUE_SIZE 1024
 
     int num_threads1 = N_THREADS;
     int num_threads2 = N_THREADS;
     int num_threads3 = N_THREADS;
 
-    //Create stages
+    //stage duration
     uint64_t duration_stage1 = DURATION_STAGE;
     uint64_t duration_stage2 = DURATION_STAGE;
     uint64_t duration_stage3 = DURATION_STAGE;
@@ -194,22 +247,21 @@ int main() {
     // Example pipeline configuration
     pipeline = create_pipeline();
     
-    
     // Create queues
     Queue *q1, *q2, *q3, *q4;
-    q1 = create_queue(1024);
-    q2 = create_queue(1024);
-    q3 = create_queue(1024);
-    q4 = create_queue(1024);
+    q1 = create_queue(QUEUE_SIZE);
+    q2 = create_queue(QUEUE_SIZE);
+    q3 = create_queue(QUEUE_SIZE);
+    q4 = create_queue(QUEUE_SIZE);
 
     Stage *stage1 = create_stage(
         1, (void *)&duration_stage1, poll_jobs, 
         NULL, num_threads1, DEFAULT_PRIORITY, 
-        q1, q2);
+        q1, q4);
     Stage *stage2 = create_stage(
         2, (void *)&duration_stage2, poll_jobs,
         NULL, num_threads2, DEFAULT_PRIORITY, 
-        q2, q3);
+        q2, q4);
     Stage *stage3 = create_stage(
         3, (void *)&duration_stage3, poll_jobs,
         NULL, num_threads3, DEFAULT_PRIORITY, 
@@ -220,8 +272,10 @@ int main() {
     // add_pipeline_stage(pipeline, stage2);
     // add_pipeline_stage(pipeline, stage3);
 
-    GeneratorArgs gen_args = {q1, 15, BATCH_SIZE};
-    GeneratorArgs sink_args = {q4, 15, BATCH_SIZE};
+    Queue* queues[3] = {q1, q2, q3};
+
+    GeneratorArgs gen_args = {(Queue **)queues, 3, 15, BATCH_SIZE};
+    SinkArgs sink_args = {q4, 15, BATCH_SIZE};
 
     ThreadArgs thread1_args = {stage1, &duration_stage1, &priority1};
     ThreadArgs thread2_args = {stage2, &duration_stage2, &priority2};
@@ -304,6 +358,8 @@ int main() {
     // stop_pipeline(pipeline);
 
     // Print statistics
+    printf("Total duration stage should be %lu microseconds\n", 
+        (duration_stage1 + duration_stage2 + duration_stage3)/1000);
     GenStats* gen_stats = (GenStats*)stats;
     printf("Generated items: %lu\n", gen_stats->tx);
     printf("Dropped items: %lu\n", gen_stats->drops);
