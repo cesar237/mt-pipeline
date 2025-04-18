@@ -174,7 +174,7 @@ int main() {
     pthread_t stage2_threads[MAX_THREADS];
     pthread_t stage3_threads[MAX_THREADS];
 
-    #define N_THREADS 15
+    #define N_THREADS 5
     #define DURATION_STAGE 10000
     #define PRIORITY 0
     #define QUEUE_SIZE 2048
