@@ -238,8 +238,8 @@ int main() {
 
     // Priority levels
     int priority1 = PRIORITY;
-    int priority2 = PRIORITY+5;
-    int priority3 = PRIORITY+10;
+    int priority2 = PRIORITY;
+    int priority3 = PRIORITY;
 
     void* stats;
     // int num_stages = 3;
