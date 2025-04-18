@@ -172,7 +172,7 @@ int main() {
     pthread_t sink_thread;
     pthread_t stage1_threads[MAX_THREADS];
 
-    #define N_THREADS 12
+    #define N_THREADS 15
     #define DURATION_STAGE 10000
     #define PRIORITY 0
     #define QUEUE_SIZE 1024

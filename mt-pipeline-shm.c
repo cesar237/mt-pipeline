@@ -222,7 +222,7 @@ int main() {
     pthread_t stage2_threads[MAX_THREADS];
     pthread_t stage3_threads[MAX_THREADS];
 
-    #define N_THREADS 4
+    #define N_THREADS 15
     #define DURATION_STAGE 10000
     #define PRIORITY 0
     #define QUEUE_SIZE 1024
@@ -318,7 +318,7 @@ int main() {
             printf("Failed to create stage2 thread\n");
             return 1;
         }
-        pin_thread_to_cpu(stage2_threads[i], i + 2 + num_threads1);
+        pin_thread_to_cpu(stage2_threads[i], i + 2);
     }
     printf("Stage2 threads created\n");
 
@@ -330,7 +330,7 @@ int main() {
             printf("Failed to create stage3 thread\n");
             return 1;
         }
-        pin_thread_to_cpu(stage3_threads[i], i + 2 + num_threads1 + num_threads2);
+        pin_thread_to_cpu(stage3_threads[i], i + 2);
     }
     printf("Stage3 threads created\n");
 
