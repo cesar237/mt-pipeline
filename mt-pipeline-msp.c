@@ -177,7 +177,7 @@ int main() {
     #define N_THREADS 15
     #define DURATION_STAGE 10000
     #define PRIORITY 0
-    #define QUEUE_SIZE 1024
+    #define QUEUE_SIZE 2048
 
     int num_threads1 = N_THREADS;
     int num_threads2 = N_THREADS;
