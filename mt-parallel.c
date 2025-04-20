@@ -25,7 +25,9 @@ typedef struct {
     uint64_t id;
     // Additional fields can be added based on specific requirements
     uint64_t created_at;
+    uint64_t finished_at;
     bool steps_ok[MAX_STAGES];
+    uint64_t stage_time[MAX_STAGES];
 } Item;
 
 typedef struct{
@@ -55,7 +57,9 @@ void* poll_jobs(void* arg)  {
         // Poll for items in the input queue
         item = (Item*)dequeue(input_queue);
         if (item) {
+            item->stage_time[stage->stage_id] = get_current_time();
             busy_poll_ns(duration);
+            item->finished_at = get_current_time();
 
             // Enqueue the processed item to the output queue
             if(enqueue(output_queue, item)) {
@@ -140,6 +144,9 @@ void* sink(void* arg) {
     uint64_t start_time = get_current_time();
     uint64_t end_time = start_time + duration_s*1000000000ULL;
     uint64_t total_latency = 0;
+    uint64_t total_wait_time = 0;
+    uint64_t total_processing_time = 0;
+    uint64_t total_sink_time = 0;
     Item* item = NULL;
 
     while (get_current_time() < end_time) {
@@ -147,8 +154,12 @@ void* sink(void* arg) {
         item = (Item*)dequeue(queue);
         if (item) {
             processed++;
+            uint64_t got = get_current_time();
             // printf("%lu\n", get_current_time() - item->created_at);
-            total_latency += (get_current_time() - item->created_at) / 1000;
+            total_latency += (got - item->created_at) / 1000;
+            total_wait_time += (item->stage_time[1] - item->created_at) / 1000;
+            total_sink_time += (got - item->finished_at) / 1000;
+            total_processing_time += (item->finished_at - item->stage_time[1]) / 1000;
             free(item);
         }
         else{
@@ -159,6 +170,10 @@ void* sink(void* arg) {
     printf("Sink thread finished. Processed: %lu, total latency: %lu microseconds\n", 
         processed, total_latency);
     printf("Average latency: %.2f microseconds\n", total_latency / (double)processed);
+    printf("Average wait time: %.2f microseconds\n", total_wait_time / (double)processed);
+    printf("Average sink time: %.2f microseconds\n", total_wait_time / (double)processed);
+    printf("Average processing time: %.2f microseconds\n", total_processing_time / (double)processed);
+
     return NULL;
 }
 
