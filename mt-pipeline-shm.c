@@ -133,7 +133,7 @@ void* generate_items(void* arg) {
     printf("Generator thread started. Should run for %d seconds.\n", duration_s);
 
     uint64_t start_time = get_current_time();
-    uint64_t end_time = start_time + duration_s*1000000000;
+    uint64_t end_time = start_time + duration_s * 1000000000ULL;
 
     while (get_current_time() < end_time) {
         // printf("Current time: %lu\n", get_current_time());
@@ -184,7 +184,7 @@ void* sink(void* arg) {
     printf("Sink thread started. Should run for %d seconds.\n", duration_s);
 
     uint64_t start_time = get_current_time();
-    uint64_t end_time = start_time + duration_s*1000000000;
+    uint64_t end_time = start_time + duration_s * 1000000000ULL;
     uint64_t total_latency = 0;
     Item* item = NULL;
 
@@ -222,7 +222,7 @@ int main() {
     pthread_t stage2_threads[MAX_THREADS];
     pthread_t stage3_threads[MAX_THREADS];
 
-    #define N_THREADS 5
+    #define N_THREADS 10
     #define DURATION_STAGE 10000
     #define PRIORITY 0
     #define QUEUE_SIZE 2048
@@ -238,7 +238,7 @@ int main() {
 
     // Priority levels
     int priority1 = PRIORITY;
-    int priority2 = PRIORITY + 5;
+    int priority2 = PRIORITY + 10;
     int priority3 = PRIORITY + 10;
 
     void* stats;
@@ -274,8 +274,8 @@ int main() {
 
     Queue* queues[3] = {q1, q2, q3};
 
-    GeneratorArgs gen_args = {(Queue **)queues, 3, 15, BATCH_SIZE};
-    SinkArgs sink_args = {q4, 15, BATCH_SIZE};
+    GeneratorArgs gen_args = {(Queue **)queues, 3, 10, BATCH_SIZE};
+    SinkArgs sink_args = {q4, 10, BATCH_SIZE};
 
     ThreadArgs thread1_args = {stage1, &duration_stage1, &priority1};
     ThreadArgs thread2_args = {stage2, &duration_stage2, &priority2};

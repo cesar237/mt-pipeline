@@ -20,13 +20,22 @@ void busy_poll_ns(uint64_t duration_ns);
 // }
 
 // Get current time in nanoseconds
-uint64_t get_current_time(void) {
-    struct timeval tv;
+// uint64_t get_current_time(void) {
+//     struct timeval tv;
     
-    if (gettimeofday(&tv, NULL) != 0) {
+//     if (gettimeofday(&tv, NULL) != 0) {
+//         return 0;
+//     }
+//     return (uint64_t)tv.tv_sec * 1000000000ULL + (uint64_t)tv.tv_usec * 1000ULL;
+// }
+
+uint64_t get_current_time(void) {
+    struct timespec ts;
+    
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
         return 0;
     }
-    return (uint64_t)tv.tv_sec * 1000000000ULL + (uint64_t)tv.tv_usec * 1000ULL;
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
 
