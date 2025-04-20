@@ -9,9 +9,9 @@
 #include <unistd.h>
 #include <time.h>
 #include <string.h>
-
-
 #include <sched.h>
+
+#include "argparse.h"
 #include "pipeline.h"
 #include "queue.h"
 #include "simulation.h"
@@ -163,7 +163,27 @@ void* sink(void* arg) {
 }
 
 // Example usage
-int main() {
+int main(int argc, const char **argv) {
+    int n_threads = 10;
+    int stage_duration = 1000;
+    int base_priority = 0;
+    int queue_size = 1024;
+    int expe_duration = 10;
+
+    struct argparse_option options[] = {
+        OPT_HELP(),
+        OPT_INTEGER('n', "threads", &n_threads, "Number of stage threads", NULL),
+        OPT_INTEGER('s', "service-time", &stage_duration, "Service time per stage", NULL),
+        OPT_INTEGER('q', "queue-size", &queue_size, "Queue Size", NULL),
+        OPT_INTEGER('d', "duration", &expe_duration, "Duration of the experiment", NULL),
+        OPT_END(),
+    };
+
+    struct argparse parser;
+    argparse_init(&parser, options, NULL, 0);
+    argc = argparse_parse(&parser, argc, argv);
+
+
     // Global pipeline instance
     Pipeline* pipeline;
 
@@ -174,24 +194,20 @@ int main() {
     pthread_t stage2_threads[MAX_THREADS];
     pthread_t stage3_threads[MAX_THREADS];
 
-    #define N_THREADS 10
-    #define DURATION_STAGE 10000
-    #define PRIORITY 0
-    #define QUEUE_SIZE 2048
 
-    int num_threads1 = N_THREADS;
-    int num_threads2 = N_THREADS;
-    int num_threads3 = N_THREADS;
+    int num_threads1 = n_threads;
+    int num_threads2 = n_threads;
+    int num_threads3 = n_threads;
 
     //Create stages
-    uint64_t duration_stage1 = DURATION_STAGE;
-    uint64_t duration_stage2 = DURATION_STAGE;
-    uint64_t duration_stage3 = DURATION_STAGE;
+    uint64_t duration_stage1 = stage_duration;
+    uint64_t duration_stage2 = stage_duration;
+    uint64_t duration_stage3 = stage_duration;
 
     // Priority levels
-    int priority1 = PRIORITY;
-    int priority2 = PRIORITY;
-    int priority3 = PRIORITY;
+    int priority1 = 0;
+    int priority2 = 0;
+    int priority3 = 0;
 
     void* stats;
     // int num_stages = 3;
@@ -202,10 +218,10 @@ int main() {
     
     // Create queues
     Queue *q1, *q2, *q3, *q4;
-    q1 = create_queue(QUEUE_SIZE);
-    q2 = create_queue(QUEUE_SIZE);
-    q3 = create_queue(QUEUE_SIZE);
-    q4 = create_queue(QUEUE_SIZE);
+    q1 = create_queue(queue_size);
+    q2 = create_queue(queue_size);
+    q3 = create_queue(queue_size);
+    q4 = create_queue(queue_size);
 
     Stage *stage1 = create_stage(
         1, (void *)&duration_stage1, poll_jobs, 
@@ -225,8 +241,8 @@ int main() {
     // add_pipeline_stage(pipeline, stage2);
     // add_pipeline_stage(pipeline, stage3);
 
-    GeneratorArgs gen_args = {q1, 10, BATCH_SIZE};
-    GeneratorArgs sink_args = {q4, 10, BATCH_SIZE};
+    GeneratorArgs gen_args = {q1, expe_duration, BATCH_SIZE};
+    GeneratorArgs sink_args = {q4, expe_duration, BATCH_SIZE};
 
     ThreadArgs thread1_args = {stage1, &duration_stage1, &priority1};
     ThreadArgs thread2_args = {stage2, &duration_stage2, &priority2};
