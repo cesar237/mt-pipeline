@@ -253,9 +253,9 @@ int main(int argc, const char **argv) {
     uint64_t duration_stage3 = stage_duration;
 
     // Priority levels
-    int priority1 = priority;
-    int priority2 = priority + 5;
-    int priority3 = priority + 10;
+    int priority1 = 0;
+    int priority2 = priority;
+    int priority3 = priority * 2;
 
     void* stats;
     // int num_stages = 3;
