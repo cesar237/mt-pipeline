@@ -33,6 +33,7 @@ bool is_queue_full(Queue* queue);
 int get_queue_size(Queue* queue);
 int get_queue_capacity(Queue* queue);
 bool enqueue(Queue* queue, void* item);
+int enqueue_batch(Queue* queue, void **items, int num_items);
 void* dequeue(Queue* queue);
 void* peek_queue(Queue* queue);
 
@@ -135,6 +136,45 @@ bool enqueue(Queue* queue, void* item) {
 
     pthread_spin_unlock(&queue->enqueue_lock);
     return true;
+}
+
+int enqueue_batch(Queue* queue, void **items, int num_items) {
+    pthread_spin_lock(&queue->enqueue_lock);
+    int enqueued = 0;
+
+    if (items) {
+        for (int i = 0; i < num_items; i++) {
+            // If queue is full, return false
+            if (is_queue_full(queue)) {
+                pthread_spin_unlock(&queue->enqueue_lock);
+                return enqueued; 
+            }
+
+            // Add item to queue
+            void *item = items[i];
+
+            if (!item) {
+                pthread_spin_unlock(&queue->enqueue_lock);
+                return enqueued;
+            }
+
+            int index = queue->head & (queue->capacity - 1);
+            queue->items[index] = item;
+            if (queue->items[index]) {
+                // Memory barrier to ensure the item is written before updating head
+                __sync_synchronize();
+                
+                // Update head
+                queue->head = (queue->head + 1) & (queue->capacity - 1);
+            }
+            // Memory barrier to ensure all writes are complete before unlocking
+            __sync_synchronize();
+            enqueued++;
+        }
+        pthread_spin_unlock(&queue->enqueue_lock);
+    }
+
+    return enqueued;
 }
 
 void* dequeue(Queue* queue) {

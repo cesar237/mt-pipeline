@@ -68,6 +68,7 @@ void start_pipeline(Pipeline* pipeline);
 void stop_pipeline(Pipeline* pipeline);
 
 int pin_thread_to_cpu(pthread_t thread, int cpu_id);
+int set_thread_affinity(pthread_t thread, int *cpus, int num_cpus);
 int set_current_thread_nice_level(int priority);
 
 int set_current_thread_nice_level(int priority) {
@@ -84,6 +85,20 @@ int pin_thread_to_cpu(pthread_t thread, int cpu_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(cpu_id, &cpuset);
+    return pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
+}
+
+int set_thread_affinity(pthread_t thread, int *cpus, int num_cpus) {
+    int ret = -1;
+    if (!cpus)
+        return ret;
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+
+    for (int i = 0; i < num_cpus; i++) {
+        CPU_SET(cpus[i], &cpuset);
+    }
     return pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
 }
 
